@@ -1,4 +1,4 @@
-﻿@page "/signin"
+@page "/signin"
 @attribute [AllowAnonymous]
 
 @using GdeWeb.Components.Layout
@@ -20,6 +20,7 @@
 @inject ILocalStorageService localStorage
 @inject NavigationManager navigationManager
 @inject AuthenticationStateProvider authenticationStateProvider
+@inject IHttpContextAccessor httpContextAccessor
 
 <style>
     .footer {
@@ -63,6 +64,40 @@
 
     .mud-card-content {
         align-content: center;
+    }
+
+    .google-btn {
+        width: 100%;
+        margin-top: 20px;
+        background-color: white;
+        color: #444;
+        border: 1px solid #ddd;
+        padding: 12px;
+        font-weight: 500;
+        transition: background-color 0.3s, box-shadow 0.3s;
+    }
+
+    .google-btn:hover {
+        background-color: #f8f9fa;
+        box-shadow: 0 2px 4px rgba(0,0,0,.1);
+    }
+
+    .divider-container {
+        display: flex;
+        align-items: center;
+        margin: 20px 0;
+    }
+
+    .divider-line {
+        flex: 1;
+        height: 1px;
+        background-color: #ddd;
+    }
+
+    .divider-text {
+        margin: 0 15px;
+        color: #666;
+        font-size: 0.9rem;
     }
 </style>
 
@@ -110,6 +145,16 @@
                                               Validation="@(new Func<string, string>(PasswordMatch))" Disabled="isLoading"></MudTextField>
 
                                 <MudButton Class="card-button" Variant="Variant.Filled" Color="Color.Primary" DropShadow="true" OnClick="@Submits" Style="margin-top: 40px;" Disabled="isLoading">Bejelentkezés</MudButton>
+
+                                <div class="divider-container">
+                                    <div class="divider-line"></div>
+                                    <span class="divider-text">vagy</span>
+                                    <div class="divider-line"></div>
+                                </div>
+
+                                <MudButton Class="google-btn" Variant="Variant.Outlined" OnClick="@SignInWithGoogle" StartIcon="@Icons.Custom.Brands.Google" Disabled="isLoading">
+                                    Bejelentkezés Google fiókkal
+                                </MudButton>
 
                                 <MudText Align="Align.Left" Typo="Typo.body1" Class="card-links">
                                     Még nincs fiókja?
@@ -236,6 +281,34 @@
     /// BUTTON FUNCTIONS
     /// </summary>
     #region BUTTON FUNCTIONS
+    private async Task SignInWithGoogle()
+    {
+        try
+        {
+            var httpContext = httpContextAccessor.HttpContext;
+            if (httpContext == null)
+            {
+                snackbarService.ShowSnackbar(Severity.Error, "HTTP context nem elérhető", MainLayout.pageWidth);
+                return;
+            }
+
+            // Redirect to Google OAuth
+            var redirectUrl = "/signin-google";
+            var properties = new Microsoft.AspNetCore.Authentication.AuthenticationProperties
+            {
+                RedirectUri = redirectUrl
+            };
+
+            await httpContext.ChallengeAsync(
+                Microsoft.AspNetCore.Authentication.Google.GoogleDefaults.AuthenticationScheme,
+                properties);
+        }
+        catch (Exception ex)
+        {
+            snackbarService.ShowSnackbar(Severity.Error, $"Hiba történt: {ex.Message}", MainLayout.pageWidth);
+        }
+    }
+
     private async Task OpenUpdateDialog()
     {
         DialogOptions options = new DialogOptions

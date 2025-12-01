@@ -1,8 +1,9 @@
-﻿using Blazored.LocalStorage;
+using Blazored.LocalStorage;
 using GdeWeb.Components;
 using GdeWeb.Interfaces;
 using GdeWeb.Services;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authentication.Google;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Components.Authorization;
 using MudBlazor.Services;
@@ -50,12 +51,27 @@ namespace GdeWeb
             // 1) Hitelesítés (cookie példa)
             // Authentication Core - For authentication
             builder.Services
-                .AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+                .AddAuthentication(options =>
+                {
+                    options.DefaultScheme = CookieAuthenticationDefaults.AuthenticationScheme;
+                    options.DefaultChallengeScheme = GoogleDefaults.AuthenticationScheme;
+                })
                 .AddCookie(options =>
                 {
                     options.LoginPath = "/signin";
-                    //options.AccessDeniedPath = "/forbidden";
-                    // további opciók...
+                    options.ExpireTimeSpan = TimeSpan.FromDays(30);
+                    options.SlidingExpiration = true;
+                })
+                .AddGoogle(options =>
+                {
+                    options.ClientId = configuration["Authentication:Google:ClientId"] ?? "";
+                    options.ClientSecret = configuration["Authentication:Google:ClientSecret"] ?? "";
+                    options.CallbackPath = "/signin-google";
+                    options.SaveTokens = true;
+
+                    // Request additional scopes
+                    options.Scope.Add("profile");
+                    options.Scope.Add("email");
                 });
 
             // 2) Jogosultságkezelés

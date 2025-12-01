@@ -1,0 +1,178 @@
+@page "/signin-google"
+@attribute [AllowAnonymous]
+
+@using GdeWeb.Components.Layout
+@using GdeWeb.Services
+@using Microsoft.AspNetCore.Authentication
+@using Microsoft.AspNetCore.Authentication.Cookies
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using GdeWebModels
+@using GdeWeb.Interfaces
+
+@inject IAuthService authService
+@inject IUserService userService
+@inject ISnackbarService snackbarService
+@inject NavigationManager navigationManager
+@inject AuthenticationStateProvider authenticationStateProvider
+@inject IHttpContextAccessor httpContextAccessor
+
+<PageTitle>Google Sign In</PageTitle>
+
+<div class="main-page">
+    <div class="loading-center">
+        <MudProgressCircular Color="Color.Secondary" Indeterminate="true" />
+        <MudText Typo="Typo.body1" Class="mt-4">Bejelentkezés Google fiókkal...</MudText>
+    </div>
+</div>
+
+@code {
+    [CascadingParameter]
+    public MainLayout MainLayout { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await HandleGoogleCallback();
+    }
+
+    private async Task HandleGoogleCallback()
+    {
+        try
+        {
+            var httpContext = httpContextAccessor.HttpContext;
+            if (httpContext == null)
+            {
+                snackbarService.ShowSnackbar(Severity.Error, "Hiba: HTTP context nem elérhető", MainLayout.pageWidth);
+                navigationManager.NavigateTo("/signin");
+                return;
+            }
+
+            // Authenticate with Google
+            var authenticateResult = await httpContext.AuthenticateAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+            if (!authenticateResult.Succeeded)
+            {
+                snackbarService.ShowSnackbar(Severity.Error, "Google bejelentkezés sikertelen", MainLayout.pageWidth);
+                navigationManager.NavigateTo("/signin");
+                return;
+            }
+
+            // Extract claims from Google ID token
+            var principal = authenticateResult.Principal;
+            var email = principal?.FindFirst(ClaimTypes.Email)?.Value;
+            var name = principal?.FindFirst(ClaimTypes.Name)?.Value;
+            var givenName = principal?.FindFirst(ClaimTypes.GivenName)?.Value;
+            var surname = principal?.FindFirst(ClaimTypes.Surname)?.Value;
+            var nameIdentifier = principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value; // Google User ID
+            var picture = principal?.FindFirst("picture")?.Value; // Profile picture URL
+
+            if (string.IsNullOrEmpty(email))
+            {
+                snackbarService.ShowSnackbar(Severity.Error, "Email cím nem található a Google fiókban", MainLayout.pageWidth);
+                navigationManager.NavigateTo("/signin");
+                return;
+            }
+
+            // Try to authenticate user or create new user
+            var loginResult = await AuthenticateOrCreateUser(email, givenName, surname, name, nameIdentifier, picture);
+
+            if (loginResult != null && loginResult.Result.Success)
+            {
+                // Mark user as authenticated
+                await ((CustomAuthentication)authenticationStateProvider).MarkUserAsLoggedOut();
+                await MainLayout.RefreshLoggedUser();
+
+                snackbarService.ShowSnackbar(Severity.Success, "Sikeres bejelentkezés Google fiókkal!", MainLayout.pageWidth);
+                await ((CustomAuthentication)authenticationStateProvider).MarkUserAsAuthenticated(loginResult);
+                await MainLayout.RefreshLoggedUser();
+                navigationManager.NavigateTo("/dashboard");
+            }
+            else
+            {
+                snackbarService.ShowSnackbar(Severity.Error, loginResult?.Result.ErrorMessage ?? "Bejelentkezési hiba", MainLayout.pageWidth);
+                navigationManager.NavigateTo("/signin");
+            }
+        }
+        catch (Exception ex)
+        {
+            snackbarService.ShowSnackbar(Severity.Error, $"Hiba történt: {ex.Message}", MainLayout.pageWidth);
+            navigationManager.NavigateTo("/signin");
+        }
+    }
+
+    private async Task<LoginResultModel?> AuthenticateOrCreateUser(
+        string email,
+        string? givenName,
+        string? surname,
+        string? fullName,
+        string? googleId,
+        string? pictureUrl)
+    {
+        // Try to login with a special Google OAuth marker (backend should handle this)
+        // We'll use the Google ID as a password marker
+        var googleLoginModel = new LoginModel
+        {
+            Email = email,
+            Password = $"GOOGLE_OAUTH_{googleId}"
+        };
+
+        var loginResult = await authService.Login(googleLoginModel);
+
+        // If user doesn't exist, create new user
+        if (loginResult?.Result?.Success == false && loginResult.Result.ErrorMessage.Contains("nem található"))
+        {
+            // Parse name
+            string firstName = givenName ?? fullName?.Split(' ').FirstOrDefault() ?? "Google";
+            string lastName = surname ?? (fullName?.Split(' ').Length > 1 ? fullName.Split(' ').Last() : "User");
+
+            var newUser = new UserModel
+            {
+                Email = email,
+                FirstName = firstName,
+                LastName = lastName,
+                Password = $"GOOGLE_OAUTH_{googleId}", // Special marker for OAuth users
+                Active = true,
+                Guid = googleId ?? Guid.NewGuid().ToString(),
+                Modifier = 1,
+                UserData = new UserDataModel
+                {
+                    Sex = "Male", // Default, user can change later
+                    Birthday = DateTime.Now.AddYears(-25)
+                },
+                Roles = new List<RoleModel>
+                {
+                    new RoleModel
+                    {
+                        Id = 2,
+                        UserId = 0,
+                        Name = "Beginner",
+                        Result = new ResultModel { Success = true, ErrorMessage = "" }
+                    }
+                },
+                Result = new ResultModel { Success = true, ErrorMessage = "" }
+            };
+
+            var createResult = await userService.AddUser(newUser);
+
+            if (createResult.Success)
+            {
+                // Try login again
+                loginResult = await authService.Login(googleLoginModel);
+            }
+            else
+            {
+                return new LoginResultModel
+                {
+                    Result = new ResultModel
+                    {
+                        Success = false,
+                        ErrorMessage = createResult.ErrorMessage
+                    }
+                };
+            }
+        }
+
+        return loginResult;
+    }
+}
